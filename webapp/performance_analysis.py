@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def show():
+    plt.style.use("dark_background")
     st.title("Performance Analysis")
 
     # Excel file upload
@@ -121,64 +122,6 @@ def show():
                            "top10_g_index.csv",
                            "text/csv")
 
-        # --- Missing Citation Information ---
-        st.subheader("Articles Missing Citation Information")
-
-        missing_citations = df[df['Times Cited'].isna()][['Title', 'Publication year']]
-        count_missing = len(missing_citations)
-        total_articles = len(df)
-        percentage_missing = (count_missing / total_articles * 100) if total_articles > 0 else 0
-
-        st.markdown(f"**{count_missing} articles** are missing citation information "
-                    f"({percentage_missing:.2f}% of total {total_articles}).")
-
-        if count_missing > 0:
-            st.dataframe(missing_citations)
-            st.download_button("Download Missing Citations as CSV",
-                               missing_citations.to_csv(index=False).encode("utf-8"),
-                               "missing_citations.csv",
-                               "text/csv")
-
-       # --- Pie Chart of Missing Citations by Year ---
-        st.subheader("Distribution of Missing Citation Information by Year")
-
-        year_counts = missing_citations['Publication year'].value_counts()
-
-        # Sort years by percentage (descending order)
-        year_counts = year_counts.sort_values(ascending=False)
-
-        fig, ax = plt.subplots()
-        ax.pie(year_counts, labels=year_counts.index, autopct='%1.1f%%', startangle=90)
-        ax.axis('equal')  # Equal aspect ratio makes the pie a circle
-        st.pyplot(fig)
-
-        # --- Table of Missing Citations by Year ---
-        st.subheader("Table of Missing Citation Information by Year")
-
-        total_missing = len(missing_citations)
-
-        if total_missing == 0:
-            st.info("No articles with missing citation information to summarize.")
-        else:
-            # Count per year (keep 'Unknown' if year is missing)
-            year_counts = (
-                missing_citations
-                .assign(**{'Publication year': missing_citations['Publication year'].fillna('Unknown')})
-                .groupby('Publication year')
-                .size()
-                .sort_values(ascending=False)  # sort by count/percentage desc
-            )
-
-            year_table = year_counts.reset_index(name="Count")
-            year_table["Percentage"] = (year_table["Count"] / total_missing * 100).round(2)
-
-            st.dataframe(year_table)
-            st.download_button(
-                "Download Missing-by-Year (CSV)",
-                year_table.to_csv(index=False).encode("utf-8"),
-                "missing_citations_by_year.csv",
-                "text/csv"
-            )
 
                     # --- Most Cited Articles per Year (with >200 citations) ---
         st.subheader("Most Cited Articles per Year (Citations > 100)")
@@ -270,33 +213,6 @@ def show():
                 "text/csv"
             )
 
-            # --- Visualization of h-index and g-index distributions ---
-        st.subheader("Distribution of h-index and g-index Across Authors")
-
-        # Histogram of h-index
-        fig, ax = plt.subplots(figsize=(8, 5))
-        ax.hist(df_results["h-index"], bins=range(0, df_results["h-index"].max() + 2), edgecolor="black")
-        ax.set_xlabel("h-index")
-        ax.set_ylabel("Number of Authors")
-        ax.set_title("Distribution of h-index Across Authors")
-        st.pyplot(fig)
-
-        # Histogram of g-index
-        fig, ax = plt.subplots(figsize=(8, 5))
-        ax.hist(df_results["g-index"], bins=range(0, df_results["g-index"].max() + 2), edgecolor="black")
-        ax.set_xlabel("g-index")
-        ax.set_ylabel("Number of Authors")
-        ax.set_title("Distribution of g-index Across Authors")
-        st.pyplot(fig)
-
-        # Scatter plot: h-index vs g-index
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.scatter(df_results["h-index"], df_results["g-index"], alpha=0.7)
-        ax.set_xlabel("h-index")
-        ax.set_ylabel("g-index")
-        ax.set_title("h-index vs g-index (per Author)")
-        st.pyplot(fig)
-
                 # --- Lorenz Curve of Author Citations with Gini Coefficient ---
         st.subheader("Lorenz Curve of Citations Across Authors")
 
@@ -369,3 +285,91 @@ def show():
             "avg_citations_per_paper.csv",
             "text/csv"
         )
+
+
+        # --- Error information ---
+        st.header("Error information")
+        # --- Missing Citation Information ---
+        st.subheader("Articles Missing Citation Information")
+
+        missing_citations = df[df['Times Cited'].isna()][['Title', 'Publication year']]
+        count_missing = len(missing_citations)
+        total_articles = len(df)
+        percentage_missing = (count_missing / total_articles * 100) if total_articles > 0 else 0
+
+        st.markdown(f"**{count_missing} articles** are missing citation information "
+                    f"({percentage_missing:.2f}% of total {total_articles}).")
+
+        if count_missing > 0:
+            st.dataframe(missing_citations)
+            st.download_button("Download Missing Citations as CSV",
+                               missing_citations.to_csv(index=False).encode("utf-8"),
+                               "missing_citations.csv",
+                               "text/csv")
+            
+    # --- Table of Missing Citations by Year ---
+        st.subheader("Table of Missing Citation Information by Year")
+
+        total_missing = len(missing_citations)
+
+        if total_missing == 0:
+            st.info("No articles with missing citation information to summarize.")
+        else:
+            # Count per year (keep 'Unknown' if year is missing)
+            year_counts = (
+                missing_citations
+                .assign(**{'Publication year': missing_citations['Publication year'].fillna('Unknown')})
+                .groupby('Publication year')
+                .size()
+                .sort_values(ascending=False)  # sort by count/percentage desc
+            )
+
+            year_table = year_counts.reset_index(name="Count")
+            year_table["Percentage"] = (year_table["Count"] / total_missing * 100).round(2)
+
+            st.dataframe(year_table)
+            st.download_button(
+                "Download Missing-by-Year (CSV)",
+                year_table.to_csv(index=False).encode("utf-8"),
+                "missing_citations_by_year.csv",
+                "text/csv"
+            )
+
+
+        # --- Uncited Articles Bar Chart ---
+        uncited_or_missing = (
+        df[df["Times Cited"].isna() | (df["Times Cited"] == 0)]
+        .groupby("Publication year")
+        .size()
+        .reset_index(name="Uncited or Missing")
+        )
+
+        # --- Bar Chart ---
+        st.subheader("📊 Articles with Zero or Missing Citations per Year")
+
+        fig, ax = plt.subplots(figsize=(8, 5))
+
+        bars = ax.bar(
+            uncited_or_missing["Publication year"].astype(str),
+            uncited_or_missing["Uncited or Missing"],
+            alpha=0.8
+        )
+
+        # Add labels on top of each bar
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                height,
+                f"{int(height)}",
+                ha="center", va="bottom", fontsize=9
+            )
+
+        ax.set_xlabel("Publication Year")
+        ax.set_ylabel("Number of Articles")
+        ax.set_title("Articles with Zero or Missing Citations per Year")
+
+        # Rotate labels vertically
+        ax.set_xticklabels(uncited_or_missing["Publication year"].astype(str), rotation=90)
+
+        st.pyplot(fig)

@@ -9,68 +9,56 @@ from collections import Counter
 import nltk
 from nltk.corpus import stopwords
 
+# --- Dark mode color settings ---
+DARK_BG = "#222222"
+DARK_FONT = "#ffffff"
+
 # --- Função principal ---
 def show():
 
-    # --- Dark mode color settings ---
-    DARK_BG = "#222222"
-    DARK_FONT = "#ffffff"
-
     st.title("📊 Science Mapping Dashboard")
-
-    uploaded_file = st.file_uploader("Upload Excel file with columns 'Title',  'Article References' and 'Keywords'", type=["xlsx"])
-
-    if not uploaded_file:
-        st.info("Please upload an Excel (.xlsx) file with 'Title', 'Article References' and 'Keywords' columns.")
-        return
-
-    df = pd.read_excel(uploaded_file)
+    df = upload_file("science")          
+    if df is None:              
+        st.stop()               
+    display_reference_summary(df)
+    display_cocitation_analysis(df)
+    display_bibliographic_coupling_analysis(df)
+    display_coword_analysis(df)
 
     # --- Helper functions ---
-    def clean_refs(refs):
-        if pd.isna(refs):
-            return []
-        refs_list = [r.strip() for r in refs.split(';') if r.strip()]
-        clean = []
-        for r in refs_list:
-            if any(c.isalpha() for c in r) and ' ' in r:
-                clean.append(r)
-            elif r.lower().startswith("10.") or "doi.org" in r.lower():
-                clean.append(r)
-            else:
-                clean.append(r)
-        return clean
-
-    def get_orange_color(degree, max_degree):
-        norm = degree / max_degree if max_degree > 0 else 0
-        r = 255
-        g = int(200 - 100 * norm)
-        b = int(100 * (1 - norm))
-        return f"rgb({r},{g},{b})"
-    
-    def run_clustering(G, algo="Greedy"):
-        if G.number_of_nodes() == 0:
-            return []
-
-        if algo == "Greedy":
-            return community.greedy_modularity_communities(G)
-        elif algo == "Label Propagation":
-            return community.asyn_lpa_communities(G)
-        elif algo == "Louvain":
-            try:
-                import community as community_louvain
-            except ImportError:
-                st.error("Please install python-louvain: pip install python-louvain")
-                return []
-            partition = community_louvain.best_partition(G)
-            clusters = {}
-            for node, cluster_id in partition.items():
-                clusters.setdefault(cluster_id, []).append(node)
-            return [set(c) for c in clusters.values()]
+def clean_refs(refs):
+    if pd.isna(refs):
+        return []
+    refs_list = [r.strip() for r in refs.split(';') if r.strip()]
+    clean = []
+    for r in refs_list:
+        if any(c.isalpha() for c in r) and ' ' in r:
+            clean.append(r)
+        elif r.lower().startswith("10.") or "doi.org" in r.lower():
+            clean.append(r)
         else:
-            return community.greedy_modularity_communities(G)  # fallback
-        
-    # --- Reference summary metrics ---
+            clean.append(r)
+    return clean
+
+def get_orange_color(degree, max_degree):
+    norm = degree / max_degree if max_degree > 0 else 0
+    r = 255
+    g = int(200 - 100 * norm)
+    b = int(100 * (1 - norm))
+    return f"rgb({r},{g},{b})"
+    
+# --- Display ---
+    
+def upload_file(key):
+
+    uploaded_file = st.file_uploader("Upload Excel file with columns 'Title',  'Article References' and 'Keywords'", type=["xlsx"], key=key)
+    if not uploaded_file:
+        st.info("Please upload an Excel (.xlsx) file with 'Title', 'Article References' and 'Keywords' columns.")
+        return None
+
+    return pd.read_excel(uploaded_file)
+
+def display_reference_summary(df):
     st.subheader("Reference Summary")
 
     st.markdown("""
@@ -90,20 +78,7 @@ def show():
     col3.metric("Articles Missing References", articles_missing_refs)
     col4.metric("Percentage of Articles Missing References", f"{articles_missing_refs/total_articles*100:.2f}%")
 
-    # =====================
-    # --- Co-Citation ---
-    # =====================
-    st.subheader("Co-Citation Analysis")
-
-    all_pairs = []
-    for refs in df['Article References'].dropna():
-        refs_list = clean_refs(refs)
-        refs_list = list(set(refs_list))
-        for combo in itertools.combinations(sorted(refs_list), 2):
-            all_pairs.append(combo)
-
-    pairs_df = pd.DataFrame(all_pairs, columns=['Ref1', 'Ref2'])
-    co_citation_counts = pairs_df.value_counts().reset_index(name='Count')
+def display_top_20_cocitation_pairs_table(co_citation_counts):
     top20_df = co_citation_counts.sort_values("Count", ascending=False).head(20)
 
     st.markdown("**Top 20 Co-Citation Pairs**")
@@ -113,71 +88,7 @@ def show():
     ]))
     st.download_button("Download Top 20 Co-Citations as CSV", top20_df.to_csv(index=False).encode("utf-8"), "top20_co_citation.csv", "text/csv")
 
-    # --- Build Co-Citation Graph ---
-    top_pairs = co_citation_counts.sort_values("Count", ascending=False).head(100)
-    G = nx.Graph()
-    for _, row in top_pairs.iterrows():
-        G.add_edge(row['Ref1'], row['Ref2'], weight=row['Count'])
-
-    algo_choice = st.selectbox("Select Clustering Algorithm (Co-Citation)", ["Greedy", "Louvain", "Label Propagation"])
-    clusters = run_clustering(G, algo_choice)
-
-    cluster_dict = {i+1: list(c) for i, c in enumerate(clusters)}
-    cluster_options = ["All"] + [f"Cluster {i}" for i in cluster_dict.keys()]
-    selected_cluster = st.selectbox("Select Co-Citation Cluster", cluster_options)
-
-    G_vis = Network(height="600px", width="100%", notebook=False, bgcolor=DARK_BG, font_color=DARK_FONT)
-    nodes_to_show = G.nodes() if selected_cluster == "All" else cluster_dict[int(selected_cluster.split()[1])]
-    max_degree = max([G.degree(node) for node in nodes_to_show]) if nodes_to_show else 1
-
-    legend_data = []
-    for cluster_id, cluster_nodes in cluster_dict.items():
-        if selected_cluster != "All" and cluster_id != int(selected_cluster.split()[1]):
-            continue
-        sorted_nodes = sorted(cluster_nodes, key=lambda n: G.degree(n), reverse=True)
-        for idx, node in enumerate(sorted_nodes, start=1):
-            node_number = f"{cluster_id}-{idx}"
-            legend_data.append({"Node": node_number, "Reference": node, "Cluster": cluster_id})
-            degree = G.degree(node)
-            G_vis.add_node(node, label=node_number, title=node,
-                           size=15 + degree*5, color=get_orange_color(degree, max_degree), group=cluster_id)
-
-    for u, v, data in G.edges(data=True):
-        if u in nodes_to_show and v in nodes_to_show:
-            G_vis.add_edge(u, v, value=data['weight'])
-
-    G_vis.save_graph("co_citation_cluster.html")
-    with open("co_citation_cluster.html", 'r', encoding='utf-8') as f:
-        HtmlFile = f.read()
-    components.html(HtmlFile, height=600)
-    st.download_button("Download Co-Citation Graph", HtmlFile, "co_citation_graph.html", "text/html")
-    st.markdown("**Legend: Node → Reference**")
-    st.dataframe(pd.DataFrame(legend_data).style.set_table_styles([
-        {'selector': 'thead', 'props': [('background-color', '#111111'), ('color', DARK_FONT)]},
-        {'selector': 'td', 'props': [('background-color', '#222222'), ('color', DARK_FONT)]}
-    ]))
-
-    # =====================
-    # --- Bibliographic Coupling ---
-    # =====================
-    st.subheader("Bibliographic Coupling Analysis")
-
-    pairs_bc = []
-    refs_list = df['Article References'].dropna().tolist()
-    titles_list = df['Title'].dropna().tolist()
-    for idx1, refs1 in enumerate(refs_list):
-        refs1_set = set(clean_refs(refs1))
-        for idx2 in range(idx1 + 1, len(refs_list)):
-            refs2_set = set(clean_refs(refs_list[idx2]))
-            shared_refs = refs1_set & refs2_set
-            if shared_refs:
-                pairs_bc.append({
-                    'Article1': titles_list[idx1],
-                    'Article2': titles_list[idx2],
-                    'Shared_Refs': len(shared_refs)
-                })
-
-    bc_df = pd.DataFrame(pairs_bc).sort_values('Shared_Refs', ascending=False)
+def display_top_20_bc_pairs_table(bc_df):
     top20_bc = bc_df.head(20)
     st.dataframe(top20_bc.style.set_table_styles([
         {'selector': 'thead', 'props': [('background-color', '#111111'), ('color', DARK_FONT)]},
@@ -185,65 +96,112 @@ def show():
     ]))
     st.download_button("Download Top 20 Bibliographic Coupling", top20_bc.to_csv(index=False).encode("utf-8"), "top20_bibliographic_coupling.csv", "text/csv")
 
-    # --- Build BC Graph ---
-    top_bc = bc_df.head(100)
-    G_bc = nx.Graph()
-    for _, row in top_bc.iterrows():
-        G_bc.add_edge(row['Article1'], row['Article2'], weight=row['Shared_Refs'])
 
-    algo_choice_bc = st.selectbox(
-    "Select Clustering Algorithm (Bibliographic Coupling)",
-    ["Greedy", "Louvain", "Label Propagation"],
-    key="clustering_algo_bc"
-    )
-    clusters_bc = run_clustering(G_bc, algo_choice_bc)
+def display_selected_cluster(selected_cluster, cluster_dict, G):
+    G_vis = Network(height="600px", width="100%", notebook=False,
+                    bgcolor=DARK_BG, font_color=DARK_FONT)
 
-    cluster_dict_bc = {i+1: list(c) for i, c in enumerate(clusters_bc)}
-    cluster_options_bc = ["All"] + [f"Cluster {i}" for i in cluster_dict_bc.keys()]
-    selected_cluster_bc = st.selectbox("Select Bibliographic Coupling Cluster", cluster_options_bc)
+    nodes_to_show = (G.nodes() if selected_cluster == "All"
+                     else cluster_dict[int(selected_cluster.split()[1])])
+    max_degree = max((G.degree(n) for n in nodes_to_show), default=1)
 
-    G_vis_bc = Network(height="600px", width="100%", notebook=False, bgcolor=DARK_BG, font_color=DARK_FONT)
-    nodes_to_show_bc = G_bc.nodes() if selected_cluster_bc == "All" else cluster_dict_bc[int(selected_cluster_bc.split()[1])]
-    max_degree_bc = max([G_bc.degree(node) for node in nodes_to_show_bc]) if nodes_to_show_bc else 1
-
-    legend_data_bc = []
-    for cluster_id, cluster_nodes in cluster_dict_bc.items():
-        if selected_cluster_bc != "All" and cluster_id != int(selected_cluster_bc.split()[1]):
+    legend_data = []
+    for cluster_id, cluster_nodes in cluster_dict.items():
+        if selected_cluster != "All" and cluster_id != int(selected_cluster.split()[1]):
             continue
-        sorted_nodes = sorted(cluster_nodes, key=lambda n: G_bc.degree(n), reverse=True)
-        for idx, node in enumerate(sorted_nodes, start=1):
+        for idx, node in enumerate(sorted(cluster_nodes,
+                                          key=lambda n: G.degree(n), reverse=True), 1):
             node_number = f"{cluster_id}-{idx}"
-            legend_data_bc.append({"Node": node_number, "Article": node, "Cluster": cluster_id})
-            degree = G_bc.degree(node)
-            G_vis_bc.add_node(node, label=node_number, title=node,
-                              size=15 + degree*5, color=get_orange_color(degree, max_degree_bc), group=cluster_id)
+            legend_data.append({"Node": node_number,
+                                "Reference": node,
+                                "Cluster": cluster_id})
+            degree = G.degree(node)
+            G_vis.add_node(node, label=node_number, title=node,
+                           size=15 + degree*5,
+                           color=get_orange_color(degree, max_degree),
+                           group=cluster_id)
 
-    for u, v, data in G_bc.edges(data=True):
-        if u in nodes_to_show_bc and v in nodes_to_show_bc:
-            G_vis_bc.add_edge(u, v, value=data['weight'])
+    for u, v, data in G.edges(data=True):
+        if u in nodes_to_show and v in nodes_to_show:
+            G_vis.add_edge(u, v, value=data["weight"])
 
-    G_vis_bc.save_graph("bibliographic_coupling_cluster.html")
-    with open("bibliographic_coupling_cluster.html", 'r', encoding='utf-8') as f:
-        HtmlFile_bc = f.read()
-    components.html(HtmlFile_bc, height=600)
-    st.download_button("Download Bibliographic Coupling Graph", HtmlFile_bc, "bibliographic_coupling_clusters.html", "text/html")
-    st.markdown("**Legend: Node → Article (BC)**")
-    st.dataframe(pd.DataFrame(legend_data_bc).style.set_table_styles([
+    html_path = "co_citation_cluster.html"
+    G_vis.save_graph(html_path)
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    components.html(html, height=600)
+    display_cluster_table(legend_data)
+
+    return html 
+
+def display_cluster_table(legend_data):
+    st.markdown("**Legend: Node → Reference**")
+    st.dataframe(pd.DataFrame(legend_data).style.set_table_styles([
         {'selector': 'thead', 'props': [('background-color', '#111111'), ('color', DARK_FONT)]},
         {'selector': 'td', 'props': [('background-color', '#222222'), ('color', DARK_FONT)]}
     ]))
 
-    # =====================
-    # --- Co-Word Analysis 
-    # =====================
+def cluster_based_on_algo_selected(G, key_prefix=""):
+    algo = st.selectbox(
+        "Select Clustering Algorithm",
+        ["Greedy", "Louvain", "Label Propagation"],
+        key=f"{key_prefix}_algo"         
+    )
+    clusters = run_clustering(G, algo)
+    return {i + 1: list(c) for i, c in enumerate(clusters)}
 
 
-    nltk.download('stopwords')
-    stop_words = set(stopwords.words('english'))
+def select_cluster_option(cluster_dict, key_prefix=""):
+    options = ["All"] + [f"Cluster {i}" for i in cluster_dict.keys()]
+    return st.selectbox(
+        "Select Cluster",
+        options,
+        key=f"{key_prefix}_cluster"      
+    )
 
-    st.subheader("Co-Word Analysis (Focus Word)")
 
-        # --- Text fields summary metrics ---
+def display_cocitation_analysis(df):
+    pairs_df = co_citation_pairs_df(df)
+    co_citation_counts = pairs_df.value_counts().reset_index(name='Count')
+
+    st.subheader("Co-Citation Analysis")
+    display_top_20_cocitation_pairs_table(co_citation_counts)
+
+    G = co_citation_graph(co_citation_counts)
+    cluster_dict = cluster_based_on_algo_selected(G, "cocitation")
+    
+
+    html_cc = display_selected_cluster(
+              select_cluster_option(cluster_dict, "cocitation"),
+              cluster_dict,
+              G)
+    if html_cc:                       # só exibe botão se houver algo
+        st.download_button("Download Co-Citation Graph",
+                        html_cc,
+                        "co_citation_graph.html",
+                        "text/html", key="cocitation_download")
+
+def display_bibliographic_coupling_analysis(df):
+    bc_pairs_df = bibliographic_coupling_pairs(df)
+
+
+    st.subheader("Bibliographic Coupling Analysis")
+    display_top_20_bc_pairs_table(bc_pairs_df)
+
+    G = bc_graph(bc_pairs_df)
+    cluster_dict = cluster_based_on_algo_selected(G, "bc")
+
+    html_cc = display_selected_cluster(
+              select_cluster_option(cluster_dict, "bc"),
+              cluster_dict,
+              G)
+    if html_cc:                       # só exibe botão se houver algo
+        st.download_button("Download Co-Citation Graph",
+                        html_cc,
+                        "co_citation_graph.html",
+                        "text/html", key="bc_dowload")
+
+def display_metrics_summary(df):
     st.subheader("Text Fields Summary")
 
     st.markdown("""
@@ -268,16 +226,99 @@ def show():
         })
 
     summary_df = pd.DataFrame(summary_data)
-
-    # Display nicely in Streamlit
     st.dataframe(summary_df.style.set_table_styles([
         {'selector': 'thead', 'props': [('background-color', '#111111'), ('color', 'white')]},
         {'selector': 'td', 'props': [('background-color', '#222222'), ('color', 'white')]}
     ]))
 
+def display_coword_analysis(df):
+    st.subheader("Co-Word Analysis (Focus Word)")
+    display_metrics_summary(df)
+
     focus_word = st.text_input("Focus Word", value="future").lower()
     fields = st.multiselect("Select fields to include", ["Title", "Keywords", "Abstract"], default=["Title", "Keywords", "Abstract"])
     top_n = st.slider("Top N co-words to display", min_value=5, max_value=100, value=20, step=5)
+
+    display_coword_graph(focus_word, fields, df, top_n)
+
+    
+    
+
+
+    
+# --- Graphics computation ---
+
+
+def run_clustering(G, algo="Greedy"):
+    if G.number_of_nodes() == 0:
+        return []
+
+    if algo == "Greedy":
+        return community.greedy_modularity_communities(G)
+    elif algo == "Label Propagation":
+        return community.asyn_lpa_communities(G)
+    elif algo == "Louvain":
+        try:
+            import community as community_louvain
+        except ImportError:
+            st.error("Please install python-louvain: pip install python-louvain")
+            return []
+        partition = community_louvain.best_partition(G)
+        clusters = {}
+        for node, cluster_id in partition.items():
+            clusters.setdefault(cluster_id, []).append(node)
+        return [set(c) for c in clusters.values()]
+    else:
+        return community.greedy_modularity_communities(G)  # fallback
+
+
+def co_citation_pairs_df(df):
+    all_pairs = []
+    for refs in df['Article References'].dropna():
+        refs_list = clean_refs(refs)
+        refs_list = list(set(refs_list))
+        for combo in itertools.combinations(sorted(refs_list), 2):
+            all_pairs.append(combo)
+    return pd.DataFrame(all_pairs, columns=['Ref1', 'Ref2'])
+
+def co_citation_graph(co_citation_counts):
+    ##only considering top 100 pairs, this can be adjusted if needed considering the increaded time of processing
+    top_pairs = co_citation_counts.sort_values("Count", ascending=False).head(100)
+    G = nx.Graph()
+    for _, row in top_pairs.iterrows():
+        G.add_edge(row['Ref1'], row['Ref2'], weight=row['Count'])
+    return G
+
+def bc_graph(bc_df):
+    ##only considering top 100 pairs, this can be adjusted if needed considering the increaded time of processing
+    top_bc = bc_df.head(100)
+    G_bc = nx.Graph()
+    for _, row in top_bc.iterrows():
+        G_bc.add_edge(row['Article1'], row['Article2'], weight=row['Shared_Refs'])
+    return G_bc
+    
+def bibliographic_coupling_pairs(df):
+    pairs_bc = []
+    refs_list = df['Article References'].dropna().tolist()
+    titles_list = df['Title'].dropna().tolist()
+    for idx1, refs1 in enumerate(refs_list):
+        refs1_set = set(clean_refs(refs1))
+        for idx2 in range(idx1 + 1, len(refs_list)):
+            refs2_set = set(clean_refs(refs_list[idx2]))
+            shared_refs = refs1_set & refs2_set
+            if shared_refs:
+                pairs_bc.append({
+                    'Article1': titles_list[idx1],
+                    'Article2': titles_list[idx2],
+                    'Shared_Refs': len(shared_refs)
+                })
+
+    return pd.DataFrame(pairs_bc).sort_values('Shared_Refs', ascending=False)
+
+
+def display_coword_graph(focus_word, fields, df, top_n):
+    nltk.download('stopwords')
+    stop_words = set(stopwords.words('english'))
 
     if focus_word and fields:
         # Combine text from selected fields

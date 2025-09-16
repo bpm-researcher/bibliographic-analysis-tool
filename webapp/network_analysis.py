@@ -4,18 +4,18 @@ import networkx as nx
 from pyvis.network import Network
 import streamlit.components.v1 as components
 from networkx.algorithms import community
-import science_mapping as sm          # upload, summary, pair helpers
+import science_mapping as sm     
+from networkx.exception import PowerIterationFailedConvergence
+import tempfile, os
 
-# ────────────────────────────────────────────────────────────────────
-# Entry point
-# ────────────────────────────────────────────────────────────────────
+
 def show():
     st.title("Network Analysis (Centrality & Clusters)")
 
-    # 1. Upload file -------------------------------------------------
     df = sm.upload_file("network")
     if df is None:
-        st.stop()
+        st.info("Please upload a file to use this section.")
+        return 
 
     sm.display_reference_summary(df)
     display(df)
@@ -24,6 +24,9 @@ def display(df):
     pairs_df = sm.co_citation_pairs_df(df)
     co_citation_counts = pairs_df.value_counts().reset_index(name="Count")
     G = sm.co_citation_graph(co_citation_counts)
+    if G.number_of_nodes() == 0:
+        st.error("Graph has no nodes.")
+        st.stop()
 
     st.write(f"Graph created with {G.number_of_nodes()} nodes and "
              f"{G.number_of_edges()} edges.")
@@ -43,12 +46,15 @@ def display(df):
 
 def calculate_metrics_df(G):
     with st.spinner("Calculating centrality metrics…"):
-        betweenness = nx.betweenness_centrality(G, weight="weight",
-                                                normalized=True)
-        eigenvector = nx.eigenvector_centrality(G, weight="weight",
-                                                max_iter=1000)
-        closeness   = nx.closeness_centrality(G)
-
+        try:
+            betweenness = nx.betweenness_centrality(G, weight="weight",
+                                                    normalized=True)
+            eigenvector = nx.eigenvector_centrality(G, weight="weight",
+                                                    max_iter=1000)
+            closeness   = nx.closeness_centrality(G)
+        except PowerIterationFailedConvergence:
+            st.warning("Eigenvector centrality did not converge. Setting all values to 0.")
+            eigenvector = {n: 0 for n in G.nodes()}
     metrics_df = pd.DataFrame({
         "Node":        list(G.nodes()),
         "Betweenness": [betweenness[n] for n in G.nodes()],
@@ -72,12 +78,12 @@ def get_clusters(G):
 
 
 def select_cluster_option(cluster_dict, key_prefix=""):
-    options = ["All"] + [f"Cluster {i}" for i in cluster_dict.keys()]
-    return st.selectbox(
-        "Select cluster to display",
-        options,
-        key=f"{key_prefix}_cluster"
-    )
+    options = ["All"]
+    if cluster_dict:
+        options.extend([f"Cluster {i}" for i in cluster_dict])
+    return st.selectbox("Select cluster to display",
+                        options,
+                        key=f"{key_prefix}_cluster")
 
 def display_network_graph(metrics_df, G,
                           betweenness, eigenvector, closeness):
@@ -135,7 +141,9 @@ def display_network_graph(metrics_df, G,
         if u in nodes_to_show and v in nodes_to_show:
             G_vis.add_edge(u, v, value=data["weight"])
 
-    html_path = "centrality_graph_fast.html"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
+        html_path = tmp.name
     G_vis.save_graph(html_path)
     with open(html_path, "r", encoding="utf-8") as f:
         components.html(f.read(), height=600)
+    os.unlink(html_path)

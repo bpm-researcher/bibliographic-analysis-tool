@@ -2,7 +2,7 @@ import streamlit as st
 
 import network_analysis
 import performance_analysis
-import webapp.science_mapping as science_mapping
+import science_mapping 
 
 st.set_page_config(page_title="Bibliographic Analysis", layout="wide")
 

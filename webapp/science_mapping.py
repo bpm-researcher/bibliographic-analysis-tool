@@ -21,7 +21,6 @@ def show():
 
     df = upload_file("science")
     if df is None:
-        # Instead of st.stop() just show a message and return
         st.info("Please upload a file to use this section.")
         return 
 

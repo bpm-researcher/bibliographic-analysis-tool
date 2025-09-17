@@ -4,9 +4,10 @@ import networkx as nx
 from pyvis.network import Network
 import streamlit.components.v1 as components
 from networkx.algorithms import community
-import science_mapping as sm     
+import science_mapping as sm
 from networkx.exception import PowerIterationFailedConvergence
 import tempfile, os
+
 
 
 def show():
@@ -15,15 +16,64 @@ def show():
     df = sm.upload_file("network")
     if df is None:
         st.info("Please upload a file to use this section.")
-        return 
+        return
 
     sm.display_reference_summary(df)
     display(df)
+
+
+def calculate_metrics_df(G):
+    with st.spinner("Calculating centrality metrics…"):
+        try:
+            betweenness = nx.betweenness_centrality(G, weight="weight",
+                                                    normalized=True)
+            eigenvector = nx.eigenvector_centrality(G, weight="weight",
+                                                    max_iter=1000)
+            closeness = nx.closeness_centrality(G)
+        except PowerIterationFailedConvergence:
+            st.warning("Eigenvector centrality did not converge. "
+                       "Setting all values to 0.")
+            eigenvector = {n: 0 for n in G.nodes()}
+
+    metrics_df = pd.DataFrame({
+        "Node":        list(G.nodes()),
+        "Betweenness": [betweenness[n] for n in G.nodes()],
+        "Eigenvector": [eigenvector[n]  for n in G.nodes()],
+        "Closeness":   [closeness[n]    for n in G.nodes()]
+    })
+    return metrics_df, betweenness, eigenvector, closeness
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# CLUSTERS
+# ────────────────────────────────────────────────────────────────────────────────
+def get_clusters(G):
+    """Greedy modularity, deterministic order."""
+    if G.number_of_nodes() == 0:
+        return {}
+
+    clusters_raw = community.greedy_modularity_communities(G)
+    clusters_sorted = sorted(
+        [sorted(list(c)) for c in clusters_raw],
+        key=lambda lst: (-len(lst), lst[0])
+    )
+    return {i + 1: c for i, c in enumerate(clusters_sorted)}
+
+
+def select_cluster_option(cluster_dict, key_prefix=""):
+    options = ["All"]
+    if cluster_dict:
+        options.extend([f"Cluster {i}" for i in cluster_dict])
+    return st.selectbox("Select cluster to display",
+                        options,
+                        key=f"{key_prefix}_cluster")
+
 
 def display(df):
     pairs_df = sm.co_citation_pairs_df(df)
     co_citation_counts = pairs_df.value_counts().reset_index(name="Count")
     G = sm.co_citation_graph(co_citation_counts)
+
     if G.number_of_nodes() == 0:
         st.error("Graph has no nodes.")
         st.stop()
@@ -44,51 +94,22 @@ def display(df):
     display_network_graph(metrics_df, G, betw, eig, clo)
 
 
-def calculate_metrics_df(G):
-    with st.spinner("Calculating centrality metrics…"):
-        try:
-            betweenness = nx.betweenness_centrality(G, weight="weight",
-                                                    normalized=True)
-            eigenvector = nx.eigenvector_centrality(G, weight="weight",
-                                                    max_iter=1000)
-            closeness   = nx.closeness_centrality(G)
-        except PowerIterationFailedConvergence:
-            st.warning("Eigenvector centrality did not converge. Setting all values to 0.")
-            eigenvector = {n: 0 for n in G.nodes()}
-    metrics_df = pd.DataFrame({
-        "Node":        list(G.nodes()),
-        "Betweenness": [betweenness[n] for n in G.nodes()],
-        "Eigenvector": [eigenvector[n] for n in G.nodes()],
-        "Closeness":   [closeness[n]   for n in G.nodes()]
-    })
-    return metrics_df, betweenness, eigenvector, closeness
-
-def get_clusters(G):
-    """Greedy modularity, deterministic order."""
-    if G.number_of_nodes() == 0:
-        return {}
-
-    clusters_raw = community.greedy_modularity_communities(G)
-
-    clusters_sorted = sorted(
-        [sorted(list(c)) for c in clusters_raw],
-        key=lambda lst: (-len(lst), lst[0])
-    )
-    return {i + 1: c for i, c in enumerate(clusters_sorted)}
-
-
-def select_cluster_option(cluster_dict, key_prefix=""):
-    options = ["All"]
-    if cluster_dict:
-        options.extend([f"Cluster {i}" for i in cluster_dict])
-    return st.selectbox("Select cluster to display",
-                        options,
-                        key=f"{key_prefix}_cluster")
-
 def display_network_graph(metrics_df, G,
                           betweenness, eigenvector, closeness):
+    dark_mode = st.toggle("Dark mode", value=False)
 
-    # 1. Build clusters once ----------------------------------------
+    if dark_mode:
+        graph_bg       = "#1e1e1e"
+        graph_font     = "white"
+        default_colour = "#a0a0a0"
+        edge_colour    = "#666666"
+    else:
+        graph_bg       = "#ffffff"
+        graph_font     = "black"
+        default_colour = "lightgray"
+        edge_colour    = "#cccccc"
+
+    # ── Cluster selector ────────────────────────────────────────────────────
     cluster_dict     = get_clusters(G)
     selected_cluster = select_cluster_option(cluster_dict, "cent")
 
@@ -104,7 +125,7 @@ def display_network_graph(metrics_df, G,
     )
 
     G_vis = Network(height="600px", width="100%",
-                    bgcolor="#ffffff", font_color="black", notebook=False)
+                    bgcolor=graph_bg, font_color=graph_font, notebook=False)
 
     top10_bet = sorted(betweenness, key=betweenness.get, reverse=True)[:10]
     top10_eig = sorted(eigenvector,  key=eigenvector.get,  reverse=True)[:10]
@@ -115,14 +136,15 @@ def display_network_graph(metrics_df, G,
             metrics_df["Node"] == node, metric_for_size
         ].values[0] * 50
 
+        # Highlight top 10s
         if node in top10_bet:
-            color = "red"
+            colour = "#ff4d4d"              # red
         elif node in top10_eig:
-            color = "blue"
+            colour = "#4d6aff"              # blue
         elif node in top10_clo:
-            color = "green"
+            colour = "#37b24d"              # green
         else:
-            color = "lightgray"
+            colour = default_colour
 
         border = 5 if node in (top10_bet + top10_eig + top10_clo) else 1
 
@@ -130,7 +152,7 @@ def display_network_graph(metrics_df, G,
             node,
             label=node,
             size=size,
-            color=color,
+            color=colour,
             borderWidth=border,
             title=(f"Betweenness: {betweenness[node]:.4f}\n"
                    f"Eigenvector: {eigenvector[node]:.4f}\n"
@@ -139,7 +161,9 @@ def display_network_graph(metrics_df, G,
 
     for u, v, data in G.edges(data=True):
         if u in nodes_to_show and v in nodes_to_show:
-            G_vis.add_edge(u, v, value=data["weight"])
+            G_vis.add_edge(u, v,
+                           value=data["weight"],
+                           color=edge_colour)
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
         html_path = tmp.name

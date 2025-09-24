@@ -1,8 +1,87 @@
-import pandas as pd
-import requests
-from data_preparation.operations.fields import CROSSREF_AVAILABLE_FIELDS as crossref_fields
-from data_preparation.operations.fields import REFERENCE_FIELDS as reference_fields
-import json
+import streamlit as st
+import tempfile
+from io import BytesIO
+import os
+
+
+CROSSREF_AVAILABLE_FIELDS = {
+    'author': 'author',
+    'Title': 'title',
+    'Abstract': 'abstract',
+    'Language': 'language',
+    'Article References': 'reference',
+    'Author References': 'reference',
+    'Times Cited': 'is-referenced-by-count',
+    'Publication Year': 'created',
+    'DOI': 'DOI',
+    'Publisher': 'publisher'
+}
+
+REFERENCE_FIELDS = ["DOI", "article-title", "author"]
+
+def show():
+    st.set_page_config(page_title="Cross-ref helper", page_icon="🔎")
+    st.title("Cross-ref Excel helper")
+
+    operation_label = st.radio(
+        "Choose an operation",
+        list(OPERATIONS.keys())
+    )
+
+    uploaded_file = st.file_uploader(
+        "Upload the Excel file you want to process (.xlsx)",
+        type=["xlsx"]
+    )
+
+    citation_field = None
+    if operation_label == "Fill ONE missing column":
+        citation_field = st.selectbox(
+            "Column to complete",
+            list(CROSSREF_AVAILABLE_FIELDS.keys())
+        )
+
+    run = st.button("Run")
+
+    if run:
+
+        if uploaded_file is None:
+            st.warning("Please upload an Excel file first.")
+            st.stop()
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_in:
+            tmp_in.write(uploaded_file.getbuffer())
+            input_path = tmp_in.name
+
+        tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+        output_path = tmp_out.name
+        tmp_out.close()            
+
+        try:
+            if operation_label == "Fill ONE missing column":
+                fill_missing_field(input_path, citation_field, output_path)
+            else:
+                fill_missing_fields(input_path, output_path)
+
+            with open(output_path, "rb") as f:
+                result_bytes = f.read()
+
+            st.success("Processing finished! Download the file below.")
+            st.download_button(
+                label="Download processed Excel file",
+                data=result_bytes,
+                file_name="processed.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+        except Exception as e:
+            st.error(f"Error during processing: {e}")
+
+        finally:
+            for path in (input_path, output_path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
 def get_field_from_api(crossref_field, search_term):
     url = "https://api.crossref.org/works/" + search_term
@@ -109,7 +188,15 @@ def error_articles(article_name, reference):
             f.write(json.dumps(reference, ensure_ascii=False) + "\n")
         else:
             f.write(str(reference) + "\n")
+
+OPERATIONS = {
+    "Fill ONE missing column"  : fill_missing_field,
+    "Fill ALL missing columns" : fill_missing_fields
+}
     
+
+
+
 
 
 

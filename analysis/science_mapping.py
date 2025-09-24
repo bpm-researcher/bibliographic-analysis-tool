@@ -10,6 +10,7 @@ import streamlit.components.v1 as components
 from networkx.algorithms import community
 from nltk.corpus import stopwords
 from pyvis.network import Network
+from networkx.exception import PowerIterationFailedConvergence
 
 
 DARK_BG = "#222222"
@@ -36,8 +37,8 @@ def safe_download(component_fn, *args, **kwargs):
         st.warning("Nothing to download yet (or duplicate key).")
 
 
-def get_orange_color(degree: int, max_degree: int) -> str:
-    norm = degree / max_degree if max_degree else 0
+def get_orange_color(value: float, max_value: float) -> str:
+    norm = value / max_value if max_value else 0
     return f"rgb(255,{int(200 - 100 * norm)},{int(100 * (1 - norm))})"
 
 
@@ -129,9 +130,9 @@ def display_cocitation_analysis(df):
         st.warning("Co-citation graph is empty.")
         return
 
-    cluster_dict = cluster_based_on_algo_selected(G, "cocitation")
+    cluster_dict, metric_choice = cluster_and_metric_selection(G, "cocitation")
     html_graph = display_selected_cluster(
-        select_cluster_option(cluster_dict, "cocitation"), cluster_dict, G
+        select_cluster_option(cluster_dict, "cocitation"), cluster_dict, G, metric_choice
     )
     if html_graph:
         safe_download(
@@ -201,8 +202,10 @@ def display_bibliographic_coupling_analysis(df):
         st.warning("Bibliographic-coupling graph is empty.")
         return
 
-    cluster_dict = cluster_based_on_algo_selected(G, "bc")
-    html_graph = display_selected_cluster(select_cluster_option(cluster_dict, "bc"), cluster_dict, G)
+    cluster_dict, metric_choice = cluster_and_metric_selection(G, "bc")
+    html_graph = display_selected_cluster(
+        select_cluster_option(cluster_dict, "bc"), cluster_dict, G, metric_choice
+    )
     if html_graph:
         safe_download(
             st.download_button,
@@ -376,19 +379,27 @@ def display_coword_graph(focus_word, fields, df, top_n):
         key="coword_download",
     )
 
-def cluster_based_on_algo_selected(G, key_prefix=""):
+
+# -------- Enhanced clustering + metric selection --------
+
+def cluster_and_metric_selection(G, key_prefix=""):
+    # Step 1. Select clustering algorithm
     algo = st.selectbox(
         "Select Clustering Algorithm",
         ["Greedy", "Louvain", "Label Propagation"],
         key=f"{key_prefix}_algo",
     )
     clusters = run_clustering(G, algo)
-    return {i + 1: list(c) for i, c in enumerate(clusters)}
+    cluster_dict = {i + 1: list(c) for i, c in enumerate(clusters)}
 
+    # Step 2. Select centrality metric
+    metric_choice = st.selectbox(
+        "Select Centrality Metric",
+        ["Degree", "Betweenness", "Eigenvector", "Closeness", "PageRank"],
+        key=f"{key_prefix}_metric",
+    )
 
-def select_cluster_option(cluster_dict, key_prefix=""):
-    options = ["All"] + [f"Cluster {i}" for i in cluster_dict.keys()]
-    return st.selectbox("Select Cluster", options, key=f"{key_prefix}_cluster")
+    return cluster_dict, metric_choice
 
 
 def run_clustering(G, algo="Greedy"):
@@ -417,7 +428,42 @@ def run_clustering(G, algo="Greedy"):
     return community.greedy_modularity_communities(G)
 
 
-def display_selected_cluster(selected_cluster, cluster_dict, G):
+def calculate_all_metrics(G):
+    """Compute a set of centrality metrics."""
+    with st.spinner("Calculating centrality metrics…"):
+        try:
+            degree = dict(G.degree())
+            betweenness = nx.betweenness_centrality(G, weight="weight", normalized=True)
+            eigenvector = nx.eigenvector_centrality(G, weight="weight", max_iter=1000)
+            closeness = nx.closeness_centrality(G)
+            pagerank = nx.pagerank(G, weight="weight")
+        except PowerIterationFailedConvergence:
+            st.warning("Eigenvector centrality did not converge. Setting to 0.")
+            eigenvector = {n: 0 for n in G.nodes()}
+            pagerank = nx.pagerank(G, weight="weight")
+            degree = dict(G.degree())
+            betweenness = nx.betweenness_centrality(G, weight="weight", normalized=True)
+            closeness = nx.closeness_centrality(G)
+
+    return {
+        "Degree": degree,
+        "Betweenness": betweenness,
+        "Eigenvector": eigenvector,
+        "Closeness": closeness,
+        "PageRank": pagerank,
+    }
+
+
+def select_cluster_option(cluster_dict, key_prefix=""):
+    options = ["All"] + [f"Cluster {i}" for i in cluster_dict.keys()]
+    return st.selectbox("Select Cluster", options, key=f"{key_prefix}_cluster")
+
+
+def display_selected_cluster(selected_cluster, cluster_dict, G, metric_choice="Degree"):
+    # Calculate metrics first
+    metrics = calculate_all_metrics(G)
+    values = metrics[metric_choice]
+
     G_vis = Network(
         height="600px", width="100%", notebook=False, bgcolor=DARK_BG, font_color=DARK_FONT
     )
@@ -428,7 +474,7 @@ def display_selected_cluster(selected_cluster, cluster_dict, G):
         else cluster_dict[int(selected_cluster.split()[1])]
     )
 
-    max_degree = max((G.degree(n) for n in nodes_to_show), default=1)
+    max_value = max((values.get(n, 0) for n in nodes_to_show), default=1)
     legend_data = []
 
     for cluster_id, cluster_nodes in cluster_dict.items():
@@ -436,19 +482,24 @@ def display_selected_cluster(selected_cluster, cluster_dict, G):
             continue
 
         for idx, node in enumerate(
-            sorted(cluster_nodes, key=lambda n: G.degree(n), reverse=True), 1
+            sorted(cluster_nodes, key=lambda n: values.get(n, 0), reverse=True), 1
         ):
             node_number = f"{cluster_id}-{idx}"
             legend_data.append(
-                {"Node": node_number, "Reference": node, "Cluster": cluster_id}
+                {
+                    "Node": node_number,
+                    "Reference": node,
+                    "Cluster": cluster_id,
+                    f"{metric_choice}": round(values.get(node, 0), 4),
+                }
             )
-            deg = G.degree(node)
+            val = values.get(node, 0)
             G_vis.add_node(
                 node,
                 label=node_number,
-                title=node,
-                size=15 + deg * 5,
-                color=get_orange_color(deg, max_degree),
+                title=f"{node}\n{metric_choice}: {val:.4f}",
+                size=15 + 40 * (val / max_value if max_value else 0),
+                color=get_orange_color(val, max_value),
                 group=cluster_id,
             )
 

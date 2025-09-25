@@ -2,6 +2,8 @@ import streamlit as st
 import tempfile
 from io import BytesIO
 import os
+import pandas as pd
+import requests as requests
 
 
 CROSSREF_AVAILABLE_FIELDS = {
@@ -144,7 +146,7 @@ def fill_missing_field(excel_path, citation_field, output_path):
 
 def fill_missing_fields(excel_path, output_path):
     df = pd.read_excel(excel_path)
-    for key in crossref_fields:
+    for key in CROSSREF_AVAILABLE_FIELDS:
         try:
             df = process_each_field(key, df)
         except Exception as e:
@@ -154,7 +156,7 @@ def fill_missing_fields(excel_path, output_path):
 
 def process_each_field(citation_field, df):
     
-    crossref_field = crossref_fields[citation_field]
+    crossref_field = CROSSREF_AVAILABLE_FIELDS[citation_field]
     for index, citation in df.iterrows():
         if pd.isna(citation[citation_field]) or str(citation[citation_field]).strip() == '':
             if crossref_field == "DOI":

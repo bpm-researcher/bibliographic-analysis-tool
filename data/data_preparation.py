@@ -5,7 +5,7 @@ import os
 
 
 CROSSREF_AVAILABLE_FIELDS = {
-    'author': 'author',
+    'Author': 'author',
     'Title': 'title',
     'Abstract': 'abstract',
     'Language': 'language',

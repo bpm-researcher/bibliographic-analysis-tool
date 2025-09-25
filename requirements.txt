@@ -2,15 +2,6 @@ streamlit
 pandas
 numpy
 matplotlib
-typing
-itertools
-collections 
-pathlib 
 networkx
 nltk
 pyvis
-os
-tempfile
-
-
-

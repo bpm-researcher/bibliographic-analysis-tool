@@ -19,8 +19,8 @@ CROSSREF_AVAILABLE_FIELDS = {
 reference_fields = ["DOI", "article-title", "author"]
 
 def show():
-    st.set_page_config(page_title="Cross-ref helper", page_icon="🔎")
-    st.title("Cross-ref Excel helper")
+    st.set_page_config(page_title="Data Preparation", page_icon="🔎")
+    st.title("Data Preparation")
 
     operation_label = st.radio(
         "Choose an operation",

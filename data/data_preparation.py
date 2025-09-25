@@ -10,14 +10,13 @@ CROSSREF_AVAILABLE_FIELDS = {
     'Abstract': 'abstract',
     'Language': 'language',
     'Article References': 'reference',
-    'Author References': 'reference',
     'Times Cited': 'is-referenced-by-count',
     'Publication Year': 'created',
     'DOI': 'DOI',
     'Publisher': 'publisher'
 }
 
-REFERENCE_FIELDS = ["DOI", "article-title", "author"]
+reference_fields = ["DOI", "article-title", "author"]
 
 def show():
     st.set_page_config(page_title="Cross-ref helper", page_icon="🔎")
